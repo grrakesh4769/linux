@@ -1,23 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2007 Oracle.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
- * License v2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public
- * License along with this program; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 021110-1307, USA.
  */
 
-#ifndef __BTRFS_ORDERED_DATA__
-#define __BTRFS_ORDERED_DATA__
+#ifndef BTRFS_ORDERED_DATA_H
+#define BTRFS_ORDERED_DATA_H
 
 /* one of these per inode */
 struct btrfs_ordered_inode_tree {
@@ -151,7 +138,9 @@ static inline int btrfs_ordered_sum_size(struct btrfs_fs_info *fs_info,
 					 unsigned long bytes)
 {
 	int num_sectors = (int)DIV_ROUND_UP(bytes, fs_info->sectorsize);
-	return sizeof(struct btrfs_ordered_sum) + num_sectors * sizeof(u32);
+	int csum_size = btrfs_super_csum_size(fs_info->super_copy);
+
+	return sizeof(struct btrfs_ordered_sum) + num_sectors * csum_size;
 }
 
 static inline void
@@ -200,9 +189,9 @@ int btrfs_ordered_update_i_size(struct inode *inode, u64 offset,
 				struct btrfs_ordered_extent *ordered);
 int btrfs_find_ordered_sum(struct inode *inode, u64 offset, u64 disk_bytenr,
 			   u32 *sum, int len);
-int btrfs_wait_ordered_extents(struct btrfs_root *root, int nr,
+u64 btrfs_wait_ordered_extents(struct btrfs_root *root, u64 nr,
 			       const u64 range_start, const u64 range_len);
-int btrfs_wait_ordered_roots(struct btrfs_fs_info *fs_info, int nr,
+u64 btrfs_wait_ordered_roots(struct btrfs_fs_info *fs_info, u64 nr,
 			      const u64 range_start, const u64 range_len);
 void btrfs_get_logged_extents(struct btrfs_inode *inode,
 			      struct list_head *logged_list,
@@ -215,5 +204,6 @@ void btrfs_wait_logged_extents(struct btrfs_trans_handle *trans,
 			       struct btrfs_root *log, u64 transid);
 void btrfs_free_logged_extents(struct btrfs_root *log, u64 transid);
 int __init ordered_data_init(void);
-void ordered_data_exit(void);
+void __cold ordered_data_exit(void);
+
 #endif

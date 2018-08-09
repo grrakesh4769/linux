@@ -71,7 +71,7 @@ struct pstore_record {
 	struct pstore_info	*psi;
 	enum pstore_type_id	type;
 	u64			id;
-	struct timespec		time;
+	struct timespec64	time;
 	char			*buf;
 	ssize_t			size;
 	ssize_t			ecc_notice_size;
@@ -138,7 +138,10 @@ struct pstore_record {
  *		memory allocation may be broken during an Oops. Regardless,
  *		@buf must be proccesed or copied before returning. The
  *		backend is also expected to write @id with something that
- 8		can help identify this record to a future @erase callback.
+ *		can help identify this record to a future @erase callback.
+ *		The @time field will be prepopulated with the current time,
+ *		when available. The @size field will have the size of data
+ *		in @buf.
  *
  *	Returns 0 on success, and non-zero on error.
  *

@@ -44,6 +44,7 @@
 #include "qed_hsi.h"
 #include "qed_sp.h"
 #include "qed_sriov.h"
+#include "qed_rdma.h"
 #ifdef CONFIG_DCB
 #include <linux/qed/qed_eth_if.h>
 #endif
@@ -191,17 +192,19 @@ static void
 qed_dcbx_set_params(struct qed_dcbx_results *p_data,
 		    struct qed_hw_info *p_info,
 		    bool enable,
-		    bool update,
 		    u8 prio,
 		    u8 tc,
 		    enum dcbx_protocol_type type,
 		    enum qed_pci_personality personality)
 {
 	/* PF update ramrod data */
-	p_data->arr[type].update = update;
 	p_data->arr[type].enable = enable;
 	p_data->arr[type].priority = prio;
 	p_data->arr[type].tc = tc;
+	if (enable)
+		p_data->arr[type].update = UPDATE_DCB;
+	else
+		p_data->arr[type].update = DONT_UPDATE_DCB_DSCP;
 
 	/* QM reconf data */
 	if (p_info->personality == personality)
@@ -213,7 +216,6 @@ static void
 qed_dcbx_update_app_info(struct qed_dcbx_results *p_data,
 			 struct qed_hwfn *p_hwfn,
 			 bool enable,
-			 bool update,
 			 u8 prio, u8 tc, enum dcbx_protocol_type type)
 {
 	struct qed_hw_info *p_info = &p_hwfn->hw_info;
@@ -231,7 +233,7 @@ qed_dcbx_update_app_info(struct qed_dcbx_results *p_data,
 		personality = qed_dcbx_app_update[i].personality;
 		name = qed_dcbx_app_update[i].name;
 
-		qed_dcbx_set_params(p_data, p_info, enable, update,
+		qed_dcbx_set_params(p_data, p_info, enable,
 				    prio, tc, type, personality);
 	}
 }
@@ -253,9 +255,8 @@ qed_dcbx_get_app_protocol_type(struct qed_hwfn *p_hwfn,
 		*type = DCBX_PROTOCOL_ROCE_V2;
 	} else {
 		*type = DCBX_MAX_PROTOCOL_TYPE;
-		DP_ERR(p_hwfn,
-		       "No action required, App TLV id = 0x%x app_prio_bitmap = 0x%x\n",
-		       id, app_prio_bitmap);
+		DP_ERR(p_hwfn, "No action required, App TLV entry = 0x%x\n",
+		       app_prio_bitmap);
 		return false;
 	}
 
@@ -272,8 +273,8 @@ qed_dcbx_process_tlv(struct qed_hwfn *p_hwfn,
 		     u32 pri_tc_tbl, int count, u8 dcbx_version)
 {
 	enum dcbx_protocol_type type;
+	bool enable, ieee, eth_tlv;
 	u8 tc, priority_map;
-	bool enable, ieee;
 	u16 protocol_id;
 	int priority;
 	int i;
@@ -281,6 +282,7 @@ qed_dcbx_process_tlv(struct qed_hwfn *p_hwfn,
 	DP_VERBOSE(p_hwfn, QED_MSG_DCB, "Num APP entries = %d\n", count);
 
 	ieee = (dcbx_version == DCBX_CONFIG_VERSION_IEEE);
+	eth_tlv = false;
 	/* Parse APP TLV */
 	for (i = 0; i < count; i++) {
 		protocol_id = QED_MFW_GET_FIELD(p_tbl[i].entry,
@@ -302,23 +304,21 @@ qed_dcbx_process_tlv(struct qed_hwfn *p_hwfn,
 			 * indication, but we only got here if there was an
 			 * app tlv for the protocol, so dcbx must be enabled.
 			 */
-			enable = !(type == DCBX_PROTOCOL_ETH);
+			if (type == DCBX_PROTOCOL_ETH) {
+				enable = false;
+				eth_tlv = true;
+			} else {
+				enable = true;
+			}
 
-			qed_dcbx_update_app_info(p_data, p_hwfn, enable, true,
+			qed_dcbx_update_app_info(p_data, p_hwfn, enable,
 						 priority, tc, type);
 		}
 	}
 
-	/* If RoCE-V2 TLV is not detected, driver need to use RoCE app
-	 * data for RoCE-v2 not the default app data.
-	 */
-	if (!p_data->arr[DCBX_PROTOCOL_ROCE_V2].update &&
-	    p_data->arr[DCBX_PROTOCOL_ROCE].update) {
-		tc = p_data->arr[DCBX_PROTOCOL_ROCE].tc;
-		priority = p_data->arr[DCBX_PROTOCOL_ROCE].priority;
-		qed_dcbx_update_app_info(p_data, p_hwfn, true, true,
-					 priority, tc, DCBX_PROTOCOL_ROCE_V2);
-	}
+	/* If Eth TLV is not detected, use UFP TC as default TC */
+	if (test_bit(QED_MF_UFP_SPECIFIC, &p_hwfn->cdev->mf_bits) && !eth_tlv)
+		p_data->arr[DCBX_PROTOCOL_ETH].tc = p_hwfn->ufp_info.tc;
 
 	/* Update ramrod protocol data and hw_info fields
 	 * with default info when corresponding APP TLV's are not detected.
@@ -332,8 +332,8 @@ qed_dcbx_process_tlv(struct qed_hwfn *p_hwfn,
 		if (p_data->arr[type].update)
 			continue;
 
-		enable = !(type == DCBX_PROTOCOL_ETH);
-		qed_dcbx_update_app_info(p_data, p_hwfn, enable, true,
+		enable = (type == DCBX_PROTOCOL_ETH) ? false : !!dcbx_version;
+		qed_dcbx_update_app_info(p_data, p_hwfn, enable,
 					 priority, tc, type);
 	}
 
@@ -709,9 +709,9 @@ qed_dcbx_get_local_lldp_params(struct qed_hwfn *p_hwfn,
 	p_local = &p_hwfn->p_dcbx_info->lldp_local[LLDP_NEAREST_BRIDGE];
 
 	memcpy(params->lldp_local.local_chassis_id, p_local->local_chassis_id,
-	       ARRAY_SIZE(p_local->local_chassis_id));
+	       sizeof(p_local->local_chassis_id));
 	memcpy(params->lldp_local.local_port_id, p_local->local_port_id,
-	       ARRAY_SIZE(p_local->local_port_id));
+	       sizeof(p_local->local_port_id));
 }
 
 static void
@@ -723,9 +723,9 @@ qed_dcbx_get_remote_lldp_params(struct qed_hwfn *p_hwfn,
 	p_remote = &p_hwfn->p_dcbx_info->lldp_remote[LLDP_NEAREST_BRIDGE];
 
 	memcpy(params->lldp_remote.peer_chassis_id, p_remote->peer_chassis_id,
-	       ARRAY_SIZE(p_remote->peer_chassis_id));
+	       sizeof(p_remote->peer_chassis_id));
 	memcpy(params->lldp_remote.peer_port_id, p_remote->peer_port_id,
-	       ARRAY_SIZE(p_remote->peer_port_id));
+	       sizeof(p_remote->peer_port_id));
 }
 
 static int
@@ -902,10 +902,33 @@ qed_dcbx_mib_update_event(struct qed_hwfn *p_hwfn,
 
 			/* update storm FW with negotiation results */
 			qed_sp_pf_update(p_hwfn);
+
+			/* for roce PFs, we may want to enable/disable DPM
+			 * when DCBx change occurs
+			 */
+			if (p_hwfn->hw_info.personality ==
+			    QED_PCI_ETH_ROCE)
+				qed_roce_dpm_dcbx(p_hwfn, p_ptt);
 		}
 	}
 
 	qed_dcbx_get_params(p_hwfn, &p_hwfn->p_dcbx_info->get, type);
+
+	if (type == QED_DCBX_OPERATIONAL_MIB) {
+		struct qed_dcbx_results *p_data;
+		u16 val;
+
+		/* Configure in NIG which protocols support EDPM and should
+		 * honor PFC.
+		 */
+		p_data = &p_hwfn->p_dcbx_info->results;
+		val = (0x1 << p_data->arr[DCBX_PROTOCOL_ROCE].tc) |
+		      (0x1 << p_data->arr[DCBX_PROTOCOL_ROCE_V2].tc);
+		val <<= NIG_REG_TX_EDPM_CTRL_TX_EDPM_TC_EN_SHIFT;
+		val |= NIG_REG_TX_EDPM_CTRL_TX_EDPM_EN;
+		qed_wr(p_hwfn, p_ptt, NIG_REG_TX_EDPM_CTRL, val);
+	}
+
 	qed_dcbx_aen(p_hwfn, type);
 
 	return rc;
@@ -923,6 +946,7 @@ int qed_dcbx_info_alloc(struct qed_hwfn *p_hwfn)
 void qed_dcbx_info_free(struct qed_hwfn *p_hwfn)
 {
 	kfree(p_hwfn->p_dcbx_info);
+	p_hwfn->p_dcbx_info = NULL;
 }
 
 static void qed_dcbx_update_protocol_data(struct protocol_dcb_data *p_data,
@@ -939,22 +963,21 @@ void qed_dcbx_set_pf_update_params(struct qed_dcbx_results *p_src,
 				   struct pf_update_ramrod_data *p_dest)
 {
 	struct protocol_dcb_data *p_dcb_data;
-	bool update_flag = false;
-
-	p_dest->pf_id = p_src->pf_id;
+	u8 update_flag;
 
 	update_flag = p_src->arr[DCBX_PROTOCOL_FCOE].update;
-	p_dest->update_fcoe_dcb_data_flag = update_flag;
+	p_dest->update_fcoe_dcb_data_mode = update_flag;
 
 	update_flag = p_src->arr[DCBX_PROTOCOL_ROCE].update;
-	p_dest->update_roce_dcb_data_flag = update_flag;
+	p_dest->update_roce_dcb_data_mode = update_flag;
+
 	update_flag = p_src->arr[DCBX_PROTOCOL_ROCE_V2].update;
-	p_dest->update_roce_dcb_data_flag = update_flag;
+	p_dest->update_rroce_dcb_data_mode = update_flag;
 
 	update_flag = p_src->arr[DCBX_PROTOCOL_ISCSI].update;
-	p_dest->update_iscsi_dcb_data_flag = update_flag;
+	p_dest->update_iscsi_dcb_data_mode = update_flag;
 	update_flag = p_src->arr[DCBX_PROTOCOL_ETH].update;
-	p_dest->update_eth_dcb_data_flag = update_flag;
+	p_dest->update_eth_dcb_data_mode = update_flag;
 
 	p_dcb_data = &p_dest->fcoe_dcb_data;
 	qed_dcbx_update_protocol_data(p_dcb_data, p_src, DCBX_PROTOCOL_FCOE);
@@ -1228,7 +1251,6 @@ int qed_dcbx_get_config_params(struct qed_hwfn *p_hwfn,
 	if (!dcbx_info)
 		return -ENOMEM;
 
-	memset(dcbx_info, 0, sizeof(*dcbx_info));
 	rc = qed_dcbx_query_params(p_hwfn, dcbx_info, QED_DCBX_OPERATIONAL_MIB);
 	if (rc) {
 		kfree(dcbx_info);
@@ -1262,11 +1284,10 @@ static struct qed_dcbx_get *qed_dcbnl_get_dcbx(struct qed_hwfn *hwfn,
 {
 	struct qed_dcbx_get *dcbx_info;
 
-	dcbx_info = kmalloc(sizeof(*dcbx_info), GFP_ATOMIC);
+	dcbx_info = kzalloc(sizeof(*dcbx_info), GFP_ATOMIC);
 	if (!dcbx_info)
 		return NULL;
 
-	memset(dcbx_info, 0, sizeof(*dcbx_info));
 	if (qed_dcbx_query_params(hwfn, dcbx_info, type)) {
 		kfree(dcbx_info);
 		return NULL;
@@ -1457,8 +1478,8 @@ static u8 qed_dcbnl_getcap(struct qed_dev *cdev, int capid, u8 *cap)
 		*cap = 0x80;
 		break;
 	case DCB_CAP_ATTR_DCBX:
-		*cap = (DCB_CAP_DCBX_LLD_MANAGED | DCB_CAP_DCBX_VER_CEE |
-			DCB_CAP_DCBX_VER_IEEE);
+		*cap = (DCB_CAP_DCBX_VER_CEE | DCB_CAP_DCBX_VER_IEEE |
+			DCB_CAP_DCBX_STATIC);
 		break;
 	default:
 		*cap = false;
@@ -1526,12 +1547,12 @@ static u8 qed_dcbnl_getdcbx(struct qed_dev *cdev)
 	if (!dcbx_info)
 		return 0;
 
-	if (dcbx_info->operational.enabled)
-		mode |= DCB_CAP_DCBX_LLD_MANAGED;
 	if (dcbx_info->operational.ieee)
 		mode |= DCB_CAP_DCBX_VER_IEEE;
 	if (dcbx_info->operational.cee)
 		mode |= DCB_CAP_DCBX_VER_CEE;
+	if (dcbx_info->operational.local)
+		mode |= DCB_CAP_DCBX_STATIC;
 
 	DP_VERBOSE(hwfn, QED_MSG_DCB, "dcb mode = %d\n", mode);
 	kfree(dcbx_info);
@@ -2291,7 +2312,7 @@ static int qed_dcbnl_ieee_setapp(struct qed_dev *cdev, struct dcb_app *app)
 
 	DP_VERBOSE(hwfn, QED_MSG_DCB, "selector = %d protocol = %d pri = %d\n",
 		   app->selector, app->protocol, app->priority);
-	if (app->priority < 0 || app->priority >= QED_MAX_PFC_PRIORITIES) {
+	if (app->priority >= QED_MAX_PFC_PRIORITIES) {
 		DP_INFO(hwfn, "Invalid priority %d\n", app->priority);
 		return -EINVAL;
 	}

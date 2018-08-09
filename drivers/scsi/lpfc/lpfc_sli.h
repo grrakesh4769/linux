@@ -61,9 +61,8 @@ struct lpfc_iocbq {
 	struct lpfc_wcqe_complete wcqe_cmpl;	/* WQE cmpl */
 	uint64_t isr_timestamp;
 
-	/* Be careful here */
-	union lpfc_wqe wqe;	/* WQE cmd */
-	IOCB_t iocb;		/* For IOCB cmd or if we want 128 byte WQE */
+	union lpfc_wqe128 wqe;	/* SLI-4 */
+	IOCB_t iocb;		/* SLI-3 */
 
 	uint8_t rsvd2;
 	uint8_t priority;	/* OAS priority */
@@ -148,6 +147,7 @@ typedef struct lpfcMboxq {
 	struct lpfc_vport *vport;/* virtual port pointer */
 	void *context1;		/* caller context information */
 	void *context2;		/* caller context information */
+	void *context3;
 
 	void (*mbox_cmpl) (struct lpfc_hba *, struct lpfcMboxq *);
 	uint8_t mbox_flag;
@@ -321,6 +321,7 @@ struct lpfc_sli {
 #define LPFC_MENLO_MAINT          0x1000 /* need for menl fw download */
 #define LPFC_SLI_ASYNC_MBX_BLK    0x2000 /* Async mailbox is blocked */
 #define LPFC_SLI_SUPPRESS_RSP     0x4000 /* Suppress RSP feature is supported */
+#define LPFC_SLI_USE_EQDR         0x8000 /* EQ Delay Register is supported */
 
 	struct lpfc_sli_ring *sli3_ring;
 

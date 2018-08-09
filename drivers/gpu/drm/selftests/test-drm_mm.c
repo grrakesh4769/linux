@@ -389,7 +389,7 @@ static int __igt_reserve(unsigned int count, u64 size)
 	if (!order)
 		goto err;
 
-	nodes = vzalloc(sizeof(*nodes) * count);
+	nodes = vzalloc(array_size(count, sizeof(*nodes)));
 	if (!nodes)
 		goto err_order;
 
@@ -514,6 +514,8 @@ static int igt_reserve(void *ignored)
 		ret = __igt_reserve(count, size + 1);
 		if (ret)
 			return ret;
+
+		cond_resched();
 	}
 
 	return 0;
@@ -577,7 +579,7 @@ static int __igt_insert(unsigned int count, u64 size, bool replace)
 	DRM_MM_BUG_ON(!size);
 
 	ret = -ENOMEM;
-	nodes = vmalloc(count * sizeof(*nodes));
+	nodes = vmalloc(array_size(count, sizeof(*nodes)));
 	if (!nodes)
 		goto err;
 
@@ -680,6 +682,8 @@ static int __igt_insert(unsigned int count, u64 size, bool replace)
 		drm_mm_for_each_node_safe(node, next, &mm)
 			drm_mm_remove_node(node);
 		DRM_MM_BUG_ON(!drm_mm_clean(&mm));
+
+		cond_resched();
 	}
 
 	ret = 0;
@@ -712,6 +716,10 @@ static int igt_insert(void *ignored)
 			return ret;
 
 		ret = __igt_insert(count, size + 1, false);
+		if (ret)
+			return ret;
+
+		cond_resched();
 	}
 
 	return 0;
@@ -741,6 +749,10 @@ static int igt_replace(void *ignored)
 			return ret;
 
 		ret = __igt_insert(count, size + 1, true);
+		if (ret)
+			return ret;
+
+		cond_resched();
 	}
 
 	return 0;
@@ -877,7 +889,7 @@ static int __igt_insert_range(unsigned int count, u64 size, u64 start, u64 end)
 	 */
 
 	ret = -ENOMEM;
-	nodes = vzalloc(count * sizeof(*nodes));
+	nodes = vzalloc(array_size(count, sizeof(*nodes)));
 	if (!nodes)
 		goto err;
 
@@ -934,6 +946,8 @@ static int __igt_insert_range(unsigned int count, u64 size, u64 start, u64 end)
 		drm_mm_for_each_node_safe(node, next, &mm)
 			drm_mm_remove_node(node);
 		DRM_MM_BUG_ON(!drm_mm_clean(&mm));
+
+		cond_resched();
 	}
 
 	ret = 0;
@@ -1011,6 +1025,8 @@ static int igt_insert_range(void *ignored)
 		ret = __igt_insert_range(count, size, max/4+1, 3*max/4-1);
 		if (ret)
 			return ret;
+
+		cond_resched();
 	}
 
 	return 0;
@@ -1030,7 +1046,7 @@ static int igt_align(void *ignored)
 	 * meets our requirements.
 	 */
 
-	nodes = vzalloc(max_count * sizeof(*nodes));
+	nodes = vzalloc(array_size(max_count, sizeof(*nodes)));
 	if (!nodes)
 		goto err;
 
@@ -1056,6 +1072,8 @@ static int igt_align(void *ignored)
 		drm_mm_for_each_node_safe(node, next, &mm)
 			drm_mm_remove_node(node);
 		DRM_MM_BUG_ON(!drm_mm_clean(&mm));
+
+		cond_resched();
 	}
 
 	ret = 0;
@@ -1097,6 +1115,8 @@ static int igt_align_pot(int max)
 			       align, bit);
 			goto out;
 		}
+
+		cond_resched();
 	}
 
 	ret = 0;
@@ -1396,7 +1416,7 @@ static int igt_evict(void *ignored)
 	 */
 
 	ret = -ENOMEM;
-	nodes = vzalloc(size * sizeof(*nodes));
+	nodes = vzalloc(array_size(size, sizeof(*nodes)));
 	if (!nodes)
 		goto err;
 
@@ -1471,6 +1491,8 @@ static int igt_evict(void *ignored)
 				goto out;
 			}
 		}
+
+		cond_resched();
 	}
 
 	ret = 0;
@@ -1504,7 +1526,7 @@ static int igt_evict_range(void *ignored)
 	 */
 
 	ret = -ENOMEM;
-	nodes = vzalloc(size * sizeof(*nodes));
+	nodes = vzalloc(array_size(size, sizeof(*nodes)));
 	if (!nodes)
 		goto err;
 
@@ -1566,6 +1588,8 @@ static int igt_evict_range(void *ignored)
 				goto out;
 			}
 		}
+
+		cond_resched();
 	}
 
 	ret = 0;
@@ -1603,12 +1627,12 @@ static int igt_topdown(void *ignored)
 	 */
 
 	ret = -ENOMEM;
-	nodes = vzalloc(count * sizeof(*nodes));
+	nodes = vzalloc(array_size(count, sizeof(*nodes)));
 	if (!nodes)
 		goto err;
 
-	bitmap = kzalloc(count / BITS_PER_LONG * sizeof(unsigned long),
-			 GFP_TEMPORARY);
+	bitmap = kcalloc(count / BITS_PER_LONG, sizeof(unsigned long),
+			 GFP_KERNEL);
 	if (!bitmap)
 		goto err_nodes;
 
@@ -1683,6 +1707,7 @@ static int igt_topdown(void *ignored)
 		drm_mm_for_each_node_safe(node, next, &mm)
 			drm_mm_remove_node(node);
 		DRM_MM_BUG_ON(!drm_mm_clean(&mm));
+		cond_resched();
 	}
 
 	ret = 0;
@@ -1716,12 +1741,12 @@ static int igt_bottomup(void *ignored)
 	 */
 
 	ret = -ENOMEM;
-	nodes = vzalloc(count * sizeof(*nodes));
+	nodes = vzalloc(array_size(count, sizeof(*nodes)));
 	if (!nodes)
 		goto err;
 
-	bitmap = kzalloc(count / BITS_PER_LONG * sizeof(unsigned long),
-			 GFP_TEMPORARY);
+	bitmap = kcalloc(count / BITS_PER_LONG, sizeof(unsigned long),
+			 GFP_KERNEL);
 	if (!bitmap)
 		goto err_nodes;
 
@@ -1783,6 +1808,7 @@ static int igt_bottomup(void *ignored)
 		drm_mm_for_each_node_safe(node, next, &mm)
 			drm_mm_remove_node(node);
 		DRM_MM_BUG_ON(!drm_mm_clean(&mm));
+		cond_resched();
 	}
 
 	ret = 0;
@@ -1970,6 +1996,8 @@ static int igt_color(void *ignored)
 			drm_mm_remove_node(node);
 			kfree(node);
 		}
+
+		cond_resched();
 	}
 
 	ret = 0;
@@ -2047,6 +2075,7 @@ static int evict_color(struct drm_mm *mm,
 		}
 	}
 
+	cond_resched();
 	return 0;
 }
 
@@ -2069,7 +2098,7 @@ static int igt_color_evict(void *ignored)
 	 */
 
 	ret = -ENOMEM;
-	nodes = vzalloc(total_size * sizeof(*nodes));
+	nodes = vzalloc(array_size(total_size, sizeof(*nodes)));
 	if (!nodes)
 		goto err;
 
@@ -2132,6 +2161,8 @@ static int igt_color_evict(void *ignored)
 				goto out;
 			}
 		}
+
+		cond_resched();
 	}
 
 	ret = 0;
@@ -2168,7 +2199,7 @@ static int igt_color_evict_range(void *ignored)
 	 */
 
 	ret = -ENOMEM;
-	nodes = vzalloc(total_size * sizeof(*nodes));
+	nodes = vzalloc(array_size(total_size, sizeof(*nodes)));
 	if (!nodes)
 		goto err;
 
@@ -2231,6 +2262,8 @@ static int igt_color_evict_range(void *ignored)
 				goto out;
 			}
 		}
+
+		cond_resched();
 	}
 
 	ret = 0;

@@ -37,7 +37,7 @@
 #include <asm/cacheflush.h> /* for run_uncached() */
 #include <asm/traps.h>
 #include <asm/dma-coherence.h>
-#include <asm/mips-cm.h>
+#include <asm/mips-cps.h>
 
 /*
  * Bits describing what cache ops an SMP callback function may perform.
@@ -851,9 +851,12 @@ static void r4k_dma_cache_wback_inv(unsigned long addr, unsigned long size)
 	/*
 	 * Either no secondary cache or the available caches don't have the
 	 * subset property so we have to flush the primary caches
-	 * explicitly
+	 * explicitly.
+	 * If we would need IPI to perform an INDEX-type operation, then
+	 * we have to use the HIT-type alternative as IPI cannot be used
+	 * here due to interrupts possibly being disabled.
 	 */
-	if (size >= dcache_size) {
+	if (!r4k_op_needs_ipi(R4K_INDEX) && size >= dcache_size) {
 		r4k_blast_dcache();
 	} else {
 		R4600_HIT_CACHEOP_WAR_IMPL;
@@ -890,7 +893,7 @@ static void r4k_dma_cache_inv(unsigned long addr, unsigned long size)
 		return;
 	}
 
-	if (size >= dcache_size) {
+	if (!r4k_op_needs_ipi(R4K_INDEX) && size >= dcache_size) {
 		r4k_blast_dcache();
 	} else {
 		R4600_HIT_CACHEOP_WAR_IMPL;
@@ -1453,6 +1456,7 @@ static void probe_pcache(void)
 	case CPU_20KC:
 	case CPU_25KF:
 	case CPU_I6400:
+	case CPU_I6500:
 	case CPU_SB1:
 	case CPU_SB1A:
 	case CPU_XLR:
@@ -1512,6 +1516,7 @@ static void probe_pcache(void)
 
 	case CPU_ALCHEMY:
 	case CPU_I6400:
+	case CPU_I6500:
 		c->icache.flags |= MIPS_CACHE_IC_F_DC;
 		break;
 

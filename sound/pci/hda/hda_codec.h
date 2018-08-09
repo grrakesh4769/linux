@@ -164,6 +164,7 @@ enum {
 	HDA_PCM_NTYPES
 };
 
+#define SNDRV_PCM_INVALID_DEVICE	(-1)
 /* for PCM creation */
 struct hda_pcm {
 	char *name;
@@ -257,6 +258,7 @@ struct hda_codec {
 	unsigned int power_save_node:1; /* advanced PM for each widget */
 	unsigned int auto_runtime_pm:1; /* enable automatic codec runtime pm */
 	unsigned int force_pin_prefix:1; /* Add location prefix */
+	unsigned int link_down_at_suspend:1; /* link down at runtime suspend */
 #ifdef CONFIG_PM
 	unsigned long power_on_acct;
 	unsigned long power_off_acct;
@@ -295,6 +297,8 @@ struct hda_codec {
 
 #define list_for_each_codec(c, bus) \
 	list_for_each_entry(c, &(bus)->core.codec_list, core.list)
+#define list_for_each_codec_safe(c, n, bus)				\
+	list_for_each_entry_safe(c, n, &(bus)->core.codec_list, core.list)
 
 /* snd_hda_codec_read/write optional flags */
 #define HDA_RW_NO_RESPONSE_FALLBACK	(1 << 0)

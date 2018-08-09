@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  Native support for the I/O-Warrior USB devices
  *
@@ -21,10 +22,8 @@
 #include <linux/poll.h>
 #include <linux/usb/iowarrior.h>
 
-/* Version Information */
-#define DRIVER_VERSION "v0.4.0"
 #define DRIVER_AUTHOR "Christian Lucht <lucht@codemercs.com>"
-#define DRIVER_DESC "USB IO-Warrior driver (Linux 2.6.x)"
+#define DRIVER_DESC "USB IO-Warrior driver"
 
 #define USB_VENDOR_ID_CODEMERCS		1984
 /* low speed iowarrior */
@@ -368,14 +367,9 @@ static ssize_t iowarrior_write(struct file *file,
 	case USB_DEVICE_ID_CODEMERCS_IOWPV2:
 	case USB_DEVICE_ID_CODEMERCS_IOW40:
 		/* IOW24 and IOW40 use a synchronous call */
-		buf = kmalloc(count, GFP_KERNEL);
-		if (!buf) {
-			retval = -ENOMEM;
-			goto exit;
-		}
-		if (copy_from_user(buf, user_buffer, count)) {
-			retval = -EFAULT;
-			kfree(buf);
+		buf = memdup_user(user_buffer, count);
+		if (IS_ERR(buf)) {
+			retval = PTR_ERR(buf);
 			goto exit;
 		}
 		retval = usb_set_report(dev->interface, 2, 0, buf, count);
@@ -683,25 +677,25 @@ static int iowarrior_release(struct inode *inode, struct file *file)
 	return retval;
 }
 
-static unsigned iowarrior_poll(struct file *file, poll_table * wait)
+static __poll_t iowarrior_poll(struct file *file, poll_table * wait)
 {
 	struct iowarrior *dev = file->private_data;
-	unsigned int mask = 0;
+	__poll_t mask = 0;
 
 	if (!dev->present)
-		return POLLERR | POLLHUP;
+		return EPOLLERR | EPOLLHUP;
 
 	poll_wait(file, &dev->read_wait, wait);
 	poll_wait(file, &dev->write_wait, wait);
 
 	if (!dev->present)
-		return POLLERR | POLLHUP;
+		return EPOLLERR | EPOLLHUP;
 
 	if (read_index(dev) != -1)
-		mask |= POLLIN | POLLRDNORM;
+		mask |= EPOLLIN | EPOLLRDNORM;
 
 	if (atomic_read(&dev->write_busy) < MAX_WRITES_IN_FLIGHT)
-		mask |= POLLOUT | POLLWRNORM;
+		mask |= EPOLLOUT | EPOLLWRNORM;
 	return mask;
 }
 
